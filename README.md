@@ -11,6 +11,8 @@ Use CPython 3.10, 3.11 or 3.12. On Ubuntu/Debian install the matching venv packa
 ./run_local.sh --scenario tunnel --seconds 8 --output build/tunnel.csv
 ```
 
+On a desktop, add `--view` to either command for an animated 3D replay. The tunnel view follows the quad and draws nearby voxels. Close the window to return to the shell. Matplotlib needs an interactive backend, such as Tk (`sudo apt install python3-tk` on Ubuntu/Debian). The CSV and `--plot` also work over SSH without a display.
+
 The launcher installs the pinned requirements into `.venv` on first use. Subsequent runs use that environment. Set `QUAD_PYTHON=python3.12` before the first run to select an interpreter. Output paths are relative to your current directory, so the launcher also works by absolute path from elsewhere. The PNG shows the horizontal track and altitude. Both examples run on a CPU without a display or Isaac Sim.
 
 On Windows PowerShell, use the Python entry point directly.

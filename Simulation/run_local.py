@@ -13,13 +13,12 @@ from Simulation.flight import CSV_HEADER, DT, Flight
 
 
 def plot_route(csv_path, plot_path):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
     import numpy as np
 
     rows = np.genfromtxt(csv_path, names=True, delimiter=",", ndmin=1)
-    fig, (plan, altitude) = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=True)
+    fig = Figure(figsize=(9, 4), constrained_layout=True)
+    plan, altitude = fig.subplots(1, 2)
     plan.plot(rows["east_m"], rows["north_m"])
     plan.scatter(rows["east_m"][-1], rows["north_m"][-1], label="Final position")
     plan.set(xlabel="East (m)", ylabel="North (m)", aspect="equal")
@@ -30,7 +29,6 @@ def plot_route(csv_path, plot_path):
         axis.grid(alpha=0.3)
     plot_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(plot_path, dpi=150)
-    plt.close(fig)
 
 
 def main():
@@ -39,6 +37,7 @@ def main():
     parser.add_argument("--seconds", type=float, default=8.0)
     parser.add_argument("--output", type=Path, default=Path("build/flight.csv"))
     parser.add_argument("--plot", type=Path, help="also save a plan view and altitude plot (PNG)")
+    parser.add_argument("--view", action="store_true", help="open a 3D replay on a desktop")
     args = parser.parse_args()
     if not math.isfinite(args.seconds) or args.seconds < DT:
         parser.error(f"--seconds must be finite and at least {DT}")
@@ -63,6 +62,11 @@ def main():
     if args.plot:
         plot_route(args.output, args.plot)
         print(f"Route plot: {args.plot}")
+    if args.view:
+        from matplotlib import pyplot as plt
+        from Simulation.local_view import animate
+        figure, animation = animate(args.output, flight)
+        plt.show()  # Keep the figure and animation alive until the viewer closes.
 
 
 if __name__ == "__main__":
