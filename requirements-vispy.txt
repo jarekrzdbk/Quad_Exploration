@@ -1,0 +1,3 @@
+-r requirements.txt
+vispy==0.15.2
+glfw==2.9.0

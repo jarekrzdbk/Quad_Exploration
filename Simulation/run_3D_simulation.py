@@ -1,151 +1,84 @@
-# -*- coding: utf-8 -*-
-"""
-author: John Bass
-email: john.bobzwik@gmail.com
-license: MIT
-Please feel free to use and modify this, but keep the above information. Thanks!
-"""
+"""Simulate the original tunnel flight, then replay it in a VisPy desktop window.
 
-import numpy as np
-import matplotlib.pyplot as plt
-import time
-import cProfile
+Original model and visualization by John Bass, john.bobzwik@gmail.com, MIT.
+"""
+import argparse
+from dataclasses import dataclass
+import math
 from pathlib import Path
 import sys
+import time
+
+import numpy as np
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from Simulation.trajectory import Trajectory
-from Simulation.potentialField import PotField
-from Simulation.ctrl import Control
-from Simulation.quadFiles.quad import Quadcopter
-from Simulation.utils.windModel import Wind
-from Simulation.flight import quad_sim, update_commands
-from Simulation import utils
-from Simulation import config
-    
+from Simulation.flight import DT, Flight
+
+
+@dataclass
+class Recording:
+    flight: Flight
+    times: np.ndarray
+    positions: np.ndarray
+    quaternions: np.ndarray
+    active_voxels: list
+    diagnostics: list
+
+
+def record(ticks, diagnostic_plots):
+    flight = Flight("tunnel")
+    times, positions, quaternions, active, history = [], [], [], [], []
+    start = time.perf_counter()
+    for tick in range(ticks + 1):
+        if tick:
+            flight.step()
+        if tick % 4 == 0 or tick == ticks:
+            p, q = flight.pose()
+            times.append(flight.time)
+            positions.append(p)
+            quaternions.append(q)
+            active.append(flight.field.idx_withinField.copy())
+        if diagnostic_plots:
+            quad = flight.quad
+            values = (flight.time, quad.pos, quad.vel, quad.quat, quad.omega, quad.euler,
+                      flight.ctrl.w_cmd, quad.wMotor, quad.thr, quad.tor, flight.traj.sDes,
+                      flight.ctrl.sDesCalc, flight.field.distanceMin)
+            history.append(tuple(np.copy(v) for v in values))
+        if tick and tick % 1000 == 0:
+            print(f"Simulated {flight.time:g} / {ticks * DT:g} s", flush=True)
+    print(f"Simulated {flight.time:.3f} s in {time.perf_counter() - start:.2f} s. Opening replay.", flush=True)
+    return Recording(flight, np.asarray(times), np.asarray(positions), np.asarray(quaternions),
+                     active, history)
+
 
 def main():
-    start_time = time.time()
-
-    # Simulation Setup
-    # --------------------------- 
-    Ti = 0
-    Ts = 0.005
-    Tf = 95
-    ifsave = 0
-
-    # Choose trajectory settings
-    # --------------------------- 
-    ctrlOptions = ["xyz_pos", "xy_vel_z_pos", "xyz_vel"]
-    trajSelect = np.zeros(3)
-
-    # Select Control Type             (0: xyz_pos,       1: xy_vel_z_pos,            2: xyz_vel)
-    ctrlType = ctrlOptions[0]   
-    # Select Position Trajectory Type (0: hover,         1: pos_waypoint_timed,      2: pos_waypoint_arrived
-    trajSelect[0] = 2
-    # Select Yaw Trajectory Type      (0: none,          1: yaw_waypoint_timed,      2: yaw_waypoint_interp,       3: zero,       4: Follow)
-    trajSelect[1] = 4
-    # Select if waypoint time is used, or if average speed is used to calculate waypoint time   (0: waypoint time,   1: average speed)
-    trajSelect[2] = 0
-    print("Control type: {}".format(ctrlType))
-
-    # Initialize Quadcopter, Controller, Wind, Result Matrixes
-    # ---------------------------
-    quad = Quadcopter(Ti)
-    traj = Trajectory(quad, ctrlType, trajSelect)
-    potfld = PotField(1)
-    ctrl = Control(quad, traj.yawType)
-    wind = Wind('None', 2.0, 90, -15)
-
-    update_commands(0, Ts, quad, ctrl, traj, potfld)
-    
-    # Initialize Result Matrixes
-    # ---------------------------
-    numTimeStep = int(Tf/Ts+1)
-
-    t_all          = np.zeros(numTimeStep)
-    s_all          = np.zeros([numTimeStep, len(quad.state)])
-    pos_all        = np.zeros([numTimeStep, len(quad.pos)])
-    vel_all        = np.zeros([numTimeStep, len(quad.vel)])
-    quat_all       = np.zeros([numTimeStep, len(quad.quat)])
-    omega_all      = np.zeros([numTimeStep, len(quad.omega)])
-    euler_all      = np.zeros([numTimeStep, len(quad.euler)])
-    sDes_traj_all  = np.zeros([numTimeStep, len(traj.sDes)])
-    sDes_calc_all  = np.zeros([numTimeStep, len(ctrl.sDesCalc)])
-    w_cmd_all      = np.zeros([numTimeStep, len(ctrl.w_cmd)])
-    wMotor_all     = np.zeros([numTimeStep, len(quad.wMotor)])
-    thr_all        = np.zeros([numTimeStep, len(quad.thr)])
-    tor_all        = np.zeros([numTimeStep, len(quad.tor)])
-    notInRange_all = np.zeros([numTimeStep, potfld.num_points], dtype=bool)
-    inRange_all    = np.zeros([numTimeStep, potfld.num_points], dtype=bool)
-    inField_all    = np.zeros([numTimeStep, potfld.num_points], dtype=bool)
-    minDist_all    = np.zeros(numTimeStep)
-
-    t_all[0]            = Ti
-    s_all[0,:]          = quad.state
-    pos_all[0,:]        = quad.pos
-    vel_all[0,:]        = quad.vel
-    quat_all[0,:]       = quad.quat
-    omega_all[0,:]      = quad.omega
-    euler_all[0,:]      = quad.euler
-    sDes_traj_all[0,:]  = traj.sDes
-    sDes_calc_all[0,:]  = ctrl.sDesCalc
-    w_cmd_all[0,:]      = ctrl.w_cmd
-    wMotor_all[0,:]     = quad.wMotor
-    thr_all[0,:]        = quad.thr
-    tor_all[0,:]        = quad.tor
-    notInRange_all[0,:] = potfld.notWithinRange
-    inRange_all[0,:]    = potfld.inRangeNotField
-    inField_all[0,:]    = potfld.withinField
-    minDist_all[0]      = potfld.distanceMin
-
-    # Run Simulation
-    # ---------------------------
-    t = Ti
-    i = 1
-    while round(t,3) < Tf:
-        
-        t = quad_sim(t, Ts, quad, ctrl, wind, traj, potfld)
-        
-        # print("{:.3f}".format(t))
-        t_all[i]             = t
-        s_all[i,:]           = quad.state
-        pos_all[i,:]         = quad.pos
-        vel_all[i,:]         = quad.vel
-        quat_all[i,:]        = quad.quat
-        omega_all[i,:]       = quad.omega
-        euler_all[i,:]       = quad.euler
-        sDes_traj_all[i,:]   = traj.sDes
-        sDes_calc_all[i,:]   = ctrl.sDesCalc
-        w_cmd_all[i,:]       = ctrl.w_cmd
-        wMotor_all[i,:]      = quad.wMotor
-        thr_all[i,:]         = quad.thr
-        tor_all[i,:]         = quad.tor
-        notInRange_all[i,:]  = potfld.notWithinRange
-        inRange_all[i,:]     = potfld.inRangeNotField
-        inField_all[i,:]     = potfld.withinField
-        minDist_all[i]       = potfld.distanceMin
-
-        i += 1
-    
-    end_time = time.time()
-    print("Simulated {:.2f}s in {:.6f}s.".format(t, end_time - start_time))
-
-    # View Results
-    # ---------------------------
-
-    def figures():
-        utils.makeFigures(quad.params, t_all, pos_all, vel_all, quat_all, omega_all, euler_all, w_cmd_all, wMotor_all, thr_all, tor_all, sDes_traj_all, sDes_calc_all, potfld, minDist_all)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--seconds", type=float, default=95.0, help="duration in model seconds")
+    parser.add_argument("--renderer", choices=("boxes", "markers"), default="boxes")
+    parser.add_argument("--no-plots", action="store_true", help="skip diagnostic figures after closing the 3D window")
+    args = parser.parse_args()
+    if not math.isfinite(args.seconds) or args.seconds < DT:
+        parser.error(f"--seconds must be finite and at least {DT}")
+    ticks = round(args.seconds / DT)
+    if not math.isclose(ticks * DT, args.seconds, abs_tol=1e-8, rel_tol=0):
+        parser.error(f"--seconds must be a multiple of {DT}")
+    try:
+        from Simulation.vispy_replay import show
+    except ModuleNotFoundError as err:
+        if err.name not in ("vispy", "glfw"):
+            raise
+        parser.exit(1, "Install the desktop dependencies with ./install_local.sh --vispy\n")
+    recording = record(ticks, not args.no_plots)
+    show(recording, args.renderer)
+    if recording.diagnostics:
+        from matplotlib import pyplot as plt
+        from Simulation.utils.display import makeFigures
+        *series, distance = (np.asarray(v) for v in zip(*recording.diagnostics))
+        makeFigures(recording.flight.quad.params, *series, recording.flight.field, distance)
         plt.show()
 
-    utils.third_PV_animation(t_all, traj.wps, pos_all, quat_all, euler_all, sDes_traj_all, Ts, quad.params, traj.xyzType, traj.yawType, potfld, notInRange_all, inRange_all, inField_all, ifsave, figures)
-    
 
 if __name__ == "__main__":
-    if (config.orient == "NED" or config.orient == "ENU"):
-        main()
-        # cProfile.run('main()')
-    else:
-        raise Exception("{} is not a valid orientation. Verify config.py file.".format(config.orient))
+    main()
