@@ -15,9 +15,9 @@ from vispy.color import ColorArray
 import time
 import sys
 
-import utils
-from utils.vispyMods import MyScene, BoxMarkers, NonUpdatingTurntable
-import config
+from Simulation import utils
+from Simulation.utils.vispyMods import MyScene, BoxMarkers, NonUpdatingTurntable
+from Simulation import config
 
 rad2deg = 180.0/pi
 deg2rad = pi/180.0

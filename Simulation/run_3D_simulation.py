@@ -10,15 +10,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import cProfile
+from pathlib import Path
+import sys
 
-from trajectory import Trajectory
-from potentialField import PotField
-from ctrl import Control
-from quadFiles.quad import Quadcopter
-from utils.windModel import Wind
-from flight import quad_sim, update_commands
-import utils
-import config
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from Simulation.trajectory import Trajectory
+from Simulation.potentialField import PotField
+from Simulation.ctrl import Control
+from Simulation.quadFiles.quad import Quadcopter
+from Simulation.utils.windModel import Wind
+from Simulation.flight import quad_sim, update_commands
+from Simulation import utils
+from Simulation import config
     
 
 def main():

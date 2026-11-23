@@ -9,8 +9,8 @@ Please feel free to use and modify this, but keep the above information. Thanks!
 import numpy as np
 from numpy import pi
 import matplotlib.pyplot as plt
-import utils
-import config
+from Simulation import utils
+from Simulation import config
 
 rad2deg = 180.0/pi
 deg2rad = pi/180.0

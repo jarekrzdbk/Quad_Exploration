@@ -4,8 +4,12 @@ import argparse
 import csv
 import math
 from pathlib import Path
+import sys
 
-from flight import CSV_HEADER, DT, Flight
+if not __package__:  # Also support python /path/to/Simulation/run_local.py.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from Simulation.flight import CSV_HEADER, DT, Flight
 
 
 def plot_route(csv_path, plot_path):

@@ -5,12 +5,12 @@ from types import SimpleNamespace
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-import config
-from ctrl import Control
-from potentialField import PotField
-from quadFiles.quad import Quadcopter
-from trajectory import Trajectory
-from utils.windModel import Wind
+from Simulation import config
+from Simulation.ctrl import Control
+from Simulation.potentialField import PotField
+from Simulation.quadFiles.quad import Quadcopter
+from Simulation.trajectory import Trajectory
+from Simulation.utils.windModel import Wind
 
 
 DT = 0.005

@@ -21,7 +21,7 @@ from vispy.color import ColorArray
 from vispy.util import keys
 from vispy.scene.cameras.perspective import PerspectiveCamera
 
-import config
+from Simulation import config
 
 ###################################
 # SceneCanvas object with added parameters for the pointcloud
