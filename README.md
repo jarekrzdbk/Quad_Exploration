@@ -2,6 +2,34 @@
 
 This project is based on the dynamic model and controller designed in [this project](https://github.com/bobzwik/Quadcopter_SimCon), which uses PyDy to derive the equations of motion.
 
+## Run the model locally
+
+Use CPython 3.10, 3.11 or 3.12. On Ubuntu/Debian install the matching venv package (for the distribution Python, `sudo apt install python3-venv`). On Linux or macOS, run these commands from the repository root.
+
+```bash
+./run_local.sh --scenario room --seconds 8 --output build/room.csv --plot build/room.png
+./run_local.sh --scenario tunnel --seconds 8 --output build/tunnel.csv
+```
+
+The launcher installs the pinned requirements into `.venv` on first use. Subsequent runs use that environment. Set `QUAD_PYTHON=python3.12` before the first run to select an interpreter. Output paths are relative to your current directory, so the launcher also works by absolute path from elsewhere. The PNG shows the horizontal track and altitude. Both examples run on a CPU without a display or Isaac Sim.
+
+On Windows PowerShell, use the Python entry point directly.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe Simulation\run_local.py --scenario room --seconds 8 --plot build/room.png
+```
+
+| Scenario | What to expect |
+| --- | --- |
+| `room` | The controller climbs to 0.9 m, moves 1.2 m east, then 1.2 m north. At 8 s the position is approximately (1.20, 1.19, 0.90) m. |
+| `tunnel` | The original waypoint-following controller and artificial potential field use the bundled voxel cloud. Run for 95 s to reproduce the original simulation duration. The model starts at the tunnel centre height. |
+
+Each model tick is 0.005 s. The CSV includes time zero, every fourth tick, and the final tick. Columns are `time_s,east_m,north_m,up_m,qw,qx,qy,qz`. The unit quaternion rotates a forward-left-up body vector into the east-north-up world. The exporter handles the native frame selected in `Simulation/config.py`. Height is relative to the model origin. The original physical constants remain in `Simulation/quadFiles/initQuad.py`.
+
+For an in-process adapter, put `Simulation/` on the Python import path, construct `flight.Flight("room")`, call `step()` once per model tick, then read `pose()` for a position tuple and a scalar-first quaternion tuple. Construct a new `Flight` to reset. The numerical integration, controller and wind model are shared with `Simulation/run_3D_simulation.py`. Its historical VisPy desktop animation has additional OpenGL and GUI dependencies described below.
+
 This project has as a goal to simulated a quadcopter/quadrotor exploring unknown environments (this is nothing groundbreaking, I'm doing this on my spare time as a hobby and to learn Python).
 
 A pointcloud environment can be generated, where every point of the pointcloud can be considered as an obstacle. Currently, an Artificial Potential Field algorithm is used to navigate through the pointcloud ( each point exerts a force on the drone in order to stop it from colliding with it). More exploration algorithms are to come.

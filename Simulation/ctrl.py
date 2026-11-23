@@ -105,8 +105,9 @@ class Control:
         self.sDesCalc = np.zeros(16)
         self.w_cmd = np.ones(4)*quad.params["w_hover"]
         self.thr_int = np.zeros(3)
+        self.att_P_gain = att_P_gain.copy()
         if (yawType == 0):
-            att_P_gain[2] = 0
+            self.att_P_gain[2] = 0
         self.setYawWeight()
         self.pos_sp        = np.zeros(3)
         self.vel_sp        = np.zeros(3)
@@ -358,7 +359,7 @@ class Control:
         self.qe = utils.quatMultiply(utils.inverse(quad.quat), self.qd)
 
         # Create rate setpoint from quaternion error
-        self.rate_sp = (2.0*np.sign(self.qe[0])*self.qe[1:4])*att_P_gain
+        self.rate_sp = (2.0*np.sign(self.qe[0])*self.qe[1:4])*self.att_P_gain
         
         # Limit yawFF
         self.yawFF = np.clip(self.yawFF, -rateMax[2], rateMax[2])
@@ -381,9 +382,7 @@ class Control:
     def setYawWeight(self):
         
         # Calculate weight of the Yaw control gain
-        roll_pitch_gain = 0.5*(att_P_gain[0] + att_P_gain[1])
-        self.yaw_w = np.clip(att_P_gain[2]/roll_pitch_gain, 0.0, 1.0)
+        roll_pitch_gain = 0.5*(self.att_P_gain[0] + self.att_P_gain[1])
+        self.yaw_w = np.clip(self.att_P_gain[2]/roll_pitch_gain, 0.0, 1.0)
 
-        att_P_gain[2] = roll_pitch_gain
-
-    
+        self.att_P_gain[2] = roll_pitch_gain

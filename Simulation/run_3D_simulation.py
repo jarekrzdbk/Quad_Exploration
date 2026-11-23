@@ -16,31 +16,9 @@ from potentialField import PotField
 from ctrl import Control
 from quadFiles.quad import Quadcopter
 from utils.windModel import Wind
+from flight import quad_sim, update_commands
 import utils
 import config
-
-def quad_sim(t, Ts, quad, ctrl, wind, traj, potfld):
-    
-    # Dynamics (using last timestep's commands)
-    # ---------------------------
-    quad.update(t, Ts, ctrl.w_cmd, wind)
-    t += Ts
-
-    # Trajectory for Desired States 
-    # ---------------------------
-    traj.desiredState(t, Ts, quad)
-
-    # Potential Field Influence 
-    # ---------------------------     
-    potfld.isWithinRange(quad)
-    potfld.isWithinField(quad)
-    potfld.rep_force(quad, traj)
-
-    # Generate Commands (for next iteration)
-    # ---------------------------
-    ctrl.controller(traj, quad, potfld, Ts)
-
-    return t
     
 
 def main():
@@ -76,19 +54,7 @@ def main():
     ctrl = Control(quad, traj.yawType)
     wind = Wind('None', 2.0, 90, -15)
 
-    # Trajectory for First Desired States
-    # ---------------------------
-    traj.desiredState(0, Ts, quad) 
-
-    # First Potential Field Calculation
-    # ---------------------------
-    potfld.isWithinRange(quad)
-    potfld.isWithinField(quad)        
-    potfld.rep_force(quad, traj)
-
-    # Generate First Commands
-    # ---------------------------
-    ctrl.controller(traj, quad, potfld, Ts)
+    update_commands(0, Ts, quad, ctrl, traj, potfld)
     
     # Initialize Result Matrixes
     # ---------------------------

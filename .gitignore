@@ -42,4 +42,6 @@ Gifs/Raw/
 .Spotlight-V100
 .Trashes
 ehthumbs.db
+/.venv/
+/build/
 Thumbs.db

@@ -6,6 +6,8 @@ license: MIT
 Please feel free to use and modify this, but keep the above information. Thanks!
 """
 
+from pathlib import Path
+
 import numpy as np
 from numpy import pi
 from numpy import sin, cos, tan, sqrt
@@ -17,7 +19,8 @@ from numpy.linalg import norm
 class PotField:
 
     def __init__(self, pfType):
-        importedData = np.genfromtxt("./Simulation/environmentGeneration/pointcloud_grid.csv", delimiter=",")
+        grid = Path(__file__).parent / "environmentGeneration" / "pointcloud_grid.csv"
+        importedData = np.genfromtxt(grid, delimiter=",")
         self.pointcloud = importedData[1::]
         self.gridStep = importedData[0]
         self.num_points = len(self.pointcloud)

@@ -51,7 +51,7 @@ class Quadcopter:
 
         # Set Integrator
         # ---------------------------
-        self.integrator = ode(self.state_dot).set_integrator('dopri5', first_step='0.00005', atol='10e-6', rtol='10e-6')
+        self.integrator = ode(self.state_dot).set_integrator('dopri5', first_step=0.00005, atol=1e-5, rtol=1e-5)
         self.integrator.set_initial_value(self.state, Ti)
 
 
@@ -227,7 +227,9 @@ class Quadcopter:
         prev_omega = self.omega
 
         self.integrator.set_f_params(cmd, wind)
-        self.state = self.integrator.integrate(t, t+Ts)
+        self.state = self.integrator.integrate(t + Ts)
+        if not self.integrator.successful():
+            raise RuntimeError(f"Quadcopter integration failed at {t + Ts:g} s")
 
         self.pos   = self.state[0:3]
         self.quat  = self.state[3:7]
