@@ -2,6 +2,8 @@
 
 This project is based on the dynamic model and controller designed in [this project](https://github.com/bobzwik/Quadcopter_SimCon), which uses PyDy to derive the equations of motion.
 
+For an explanation of the physics, controller and Python implementation, see [How the model works](#how-the-model-works). The [Python example](#running-and-inspecting-the-model-in-python) shows how to advance the simulation and inspect its state.
+
 ## Run the model locally
 
 Use CPython 3.10, 3.11 or 3.12. On Ubuntu/Debian install the matching venv package (for the distribution Python, `sudo apt install python3-venv`). On Linux or macOS, run these commands from the repository root.
@@ -41,6 +43,153 @@ A pointcloud environment can be generated, where every point of the pointcloud c
 
 [![Watch the video](http://img.youtube.com/vi/WuDDGpTPt2g/0.jpg)](https://youtu.be/WuDDGpTPt2g)
 
+## How the model works
+
+The model simulates a rigid quadcopter moving and rotating in three dimensions. Four motors produce thrust and turning moments. The physics calculates how those forces change the vehicle's velocity, position and orientation. A feedback controller reads that state and adjusts the motors to approach a waypoint. In the tunnel scenario, nearby obstacles also influence the controller's desired velocity.
+
+For example, to move horizontally, the controller first tilts the quadcopter. The tilted rotor thrust then has a horizontal component, which accelerates it toward the target. As it approaches the target, the controller reduces the requested velocity and brakes the motion. The resulting path is calculated by integrating the equations of motion on each run.
+
+```mermaid
+flowchart LR
+    W[Waypoint] --> C[Feedback controller]
+    P[Tunnel obstacle field] --> C
+    C --> M[Mixer: four motor speed commands]
+    M --> D[Motor and rigid body dynamics]
+    D --> S[Updated vehicle state]
+    S --> C
+    S --> P
+    S --> V[CSV, plots and 3D replay]
+```
+
+### Where the Python code lives
+
+Start with `Flight` to see how the components fit together, then follow the controller and dynamics methods.
+
+| File | Responsibility |
+| --- | --- |
+| [Simulation/flight.py](Simulation/flight.py) | `Flight` constructs a scenario; `step()`, `quad_sim()` and `update_commands()` run the simulation loop. |
+| [Simulation/quadFiles/quad.py](Simulation/quadFiles/quad.py) | `Quadcopter` stores the physical state. `state_dot()` evaluates its derivatives; `update()` integrates them. |
+| [Simulation/quadFiles/initQuad.py](Simulation/quadFiles/initQuad.py) | Mass, inertia, rotor coefficients, motor response, initial hover state and mixer matrix. |
+| [Simulation/trajectory.py](Simulation/trajectory.py), [Simulation/waypoints.py](Simulation/waypoints.py) | Select the desired position and heading from a waypoint sequence. |
+| [Simulation/ctrl.py](Simulation/ctrl.py) | `Control` converts position, velocity, orientation and angular rate errors into thrust and moments. Controller gains and limits are near the top. |
+| [Simulation/utils/mixer.py](Simulation/utils/mixer.py) | Convert total thrust and three moments into four motor speed commands. |
+| [Simulation/potentialField.py](Simulation/potentialField.py) | `PotField` loads obstacle points and calculates their repulsive contribution. |
+| [Simulation/config.py](Simulation/config.py), [Simulation/utils/windModel.py](Simulation/utils/windModel.py) | Coordinate convention, optional rotor gyroscopic effects and wind models. |
+| [Simulation/run_local.py](Simulation/run_local.py), [Simulation/run_3D_simulation.py](Simulation/run_3D_simulation.py) | Run `Flight`, record poses, and produce output or start a replay. |
+
+### The 21 numbers describing the vehicle
+
+`Quadcopter.state` is a NumPy array containing the variables needed to continue the physical simulation. These are its Python indices; slice endpoints are excluded.
+
+| Indices | Quantity | Units / meaning |
+| --- | --- | --- |
+| `state[0:3]` | `x, y, z` | Position in the world frame, metres. |
+| `state[3:7]` | `q0, q1, q2, q3` | Orientation quaternion, scalar first: `(w, x, y, z)`. |
+| `state[7:10]` | `xdot, ydot, zdot` | Velocity in the world frame, m/s. |
+| `state[10:13]` | `p, q, r` | Angular velocity about the body's forward, lateral and vertical axes, rad/s. The rate named `q` is separate from the quaternion. |
+| `state[13], state[15], state[17], state[19]` | Four rotor speeds | rad/s. |
+| `state[14], state[16], state[18], state[20]` | Four rotor speed derivatives | rad/s²; needed for the second order motor response. |
+
+This is six degrees of freedom for the vehicle: three translations and three rotations. The quaternion represents orientation with four numbers constrained to unit length. The additional velocity and motor variables make it possible to calculate how the vehicle evolves. `quad.pos`, `quad.quat`, `quad.vel`, `quad.omega` and `quad.wMotor` expose these values; Euler angles and the rotation matrix are calculated from the quaternion in `extended_state()`.
+
+The default in `config.py` is **NED**: world coordinates are north, east, down, and body axes are forward, right, down. Climbing therefore makes the native `z` negative. The alternative **ENU** setting uses east, north, up and a forward, left, up body. `Flight.pose()` converts the result to ENU position and a quaternion rotating FLU body vectors into ENU world vectors, whichever native convention is selected. The CSV uses this same output convention.
+
+### From motor commands to motion
+
+The controller requests four rotor speeds in rad/s through `ctrl.w_cmd`. Each motor takes time to respond. In `state_dot()`, its speed follows this second order equation:
+
+```text
+d²ω/dt² = (kp * command - ω - 2 * damp * tau * dω/dt) / tau²
+```
+
+Here `ω` is the rotor speed, `kp` is the motor gain, `damp` is the damping ratio, and `tau` sets the response timescale. Their defaults are `1.0`, `1.0` and `0.015 s`. Storing both `ω` and `dω/dt` turns each second order equation into two first order state equations that SciPy can integrate.
+
+The rotor forces are calculated with the following NumPy operations inside `state_dot()`:
+
+```python
+wMotor = np.clip(wMotor, minWmotor, maxWmotor)
+thrust = kTh * wMotor * wMotor
+torque = kTo * wMotor * wMotor
+```
+
+Each rotor's thrust and reaction torque grow with the square of its speed. The default force calculation limits rotor speeds to 75–925 rad/s. With mass `mB = 1.2 kg` and thrust coefficient `kTh = 1.076e-5 N/(rad/s)²`, a level hover requires:
+
+```text
+thrust per rotor = mass * gravity / 4 = 2.943 N
+hover speed     = sqrt(thrust per rotor / kTh) ≈ 523 rad/s
+```
+
+`init_cmd()` calculates this hover speed, and `init_state()` starts all four motors there. A difference between left and right rotor thrust produces roll; a difference between front and rear thrust produces pitch. Alternating rotor reaction torques produce yaw. The motor offsets along the two horizontal body axes are both `0.16 m`.
+
+For the default NED convention, the vehicle equations can be written compactly as:
+
+```text
+position derivative = velocity
+mass * acceleration = [0, 0, mass * gravity]
+                      + R(Q) @ [0, 0, -total_thrust] + drag
+I @ angular_acceleration = motor_moments - Ω × (I @ Ω) + gyro_moment
+quaternion derivative = 0.5 * Q ⊗ [0, p, q, r]
+```
+
+`R(Q)` rotates a body vector into the world frame, `I` is the inertia matrix, `Ω = [p, q, r]` is body angular velocity, `×` is the vector cross product, and `⊗` is quaternion multiplication. These equations explain the expanded component expressions in `DynamicsDot`: gravity and thrust accelerate the vehicle, moments change its angular velocity, and angular velocity changes its orientation. The ENU branch changes the signs appropriate to that convention.
+
+Drag acts separately along each world axis as `-Cd * v_relative * abs(v_relative)`, where `v_relative` is vehicle velocity minus wind velocity. `Flight` selects zero wind by default; drag still opposes vehicle motion. Rotor gyroscopic terms can be enabled with `config.usePrecession`, which defaults to `False`.
+
+### How the controller chooses the motor speeds
+
+Both supplied scenarios use `ctrlType="xyz_pos"`. The controller runs several stages, each producing the target for the next:
+
+1. **Position to velocity.** `xy_pos_control()` and `z_pos_control()` multiply position error by proportional gains and add any trajectory velocity feed-forward. `saturateVel()` limits the resulting speed to `1.5 m/s` by default.
+2. **Obstacle adjustment.** In the tunnel, `addFrepToVel()` adds the potential field contribution, then the speed is limited again. This makes nearby obstacles influence the direction of travel. The room scenario disables this contribution.
+3. **Velocity to thrust.** `xy_vel_control()` and `z_vel_control()` use velocity error and measured acceleration to request a world-frame thrust vector. A gravity compensation term supplies hover thrust even when the errors are zero. Integral control is available through the parameter spelled `useIntergral`, and is disabled by default. Thrust limits and a default `15°` tilt limit constrain the request.
+4. **Thrust to orientation.** `thrustToAttitude()` chooses an orientation that points the rotor thrust in the desired direction while considering the desired yaw. `attitude_control()` uses quaternion error to request body angular rates, limited to `100°/s` per axis.
+5. **Angular rates to moments.** `rate_control()` compares desired and actual body rates, with angular acceleration feedback for damping, to calculate roll, pitch and yaw moments.
+6. **Moments to motor speeds.** `mixerFM()` uses the inverse of the matrix constructed by `makeMixerFM()` to find squared rotor speeds from `[total_thrust, roll_moment, pitch_moment, yaw_moment]`. It clips those values to the squared motor limits and takes their square roots to obtain `ctrl.w_cmd`.
+
+The room trajectory selects position targets at scheduled times. The tunnel trajectory uses the waypoints in `waypoints.py`, considers a target reached within `0.4 m`, and waits `2 s` before advancing. Its `yawType=4` makes the heading follow the adjusted velocity command.
+
+### How Python advances time
+
+The numerical model has the form `d(state)/dt = state_dot(t, state, cmd, wind)`. The return value of `state_dot()` is another 21-element NumPy array containing rates of change. `Quadcopter.update()` passes that function to SciPy's `ode` integrator, configured with `dopri5`, to calculate the next state.
+
+`Flight` calculates the first command during construction. Each subsequent `Flight.step()` follows this order in `quad_sim()`:
+
+1. Hold the current four motor commands while integrating the dynamics from `t` to `t + DT`.
+2. Refresh the position, quaternion, velocity, rotor speeds and derived values. Acceleration estimates for feedback are calculated from the change in velocity and angular velocity over the tick.
+3. At the new time, call `Trajectory.desiredState()`, update the obstacle field if enabled, and run `Control.controller()` to prepare commands for the next tick.
+4. Increment the tick counter; `flight.time` is the tick count multiplied by `DT`.
+
+The controller interval is fixed at `DT = 0.005 s`, or 200 updates per simulated second. The numerical integrator can take smaller, adaptive steps internally. Simulation time advances through these calculations; it does not depend on sleeping for 5 ms in real time. The runners record poses every fourth tick, or 50 Hz, and include the final tick before plotting or replaying the recording.
+
+### Running and inspecting the model in Python
+
+After installing the dependencies above, run this code from the repository root with the virtual environment's Python, for example by starting `.venv/bin/python` and pasting it:
+
+```python
+import numpy as np
+from Simulation.flight import DT, Flight
+
+flight = Flight("room")  # Constructs the vehicle, trajectory, controller and wind.
+
+for _ in range(round(8.0 / DT)):
+    flight.step()  # Advance physics and update the controller by one model tick.
+
+position, quaternion = flight.pose()
+print("Time (s):", flight.time)
+print("Position ENU (m):", np.round(position, 3))
+print("Body-to-world quaternion (w, x, y, z):", quaternion)
+print("Actual rotor speeds (rad/s):", flight.quad.wMotor)
+print("Next commanded rotor speeds (rad/s):", flight.ctrl.w_cmd)
+```
+
+The final position is approximately `(1.20, 1.19, 0.90) m`. Use `Flight("tunnel")` to include the bundled obstacles and tunnel waypoints. Construct a new `Flight` to restart, so the integrator, trajectory and controller state are all initialized together. For experiments, edit physical constants in `initQuad.py`, controller gains in `ctrl.py`, tunnel waypoints in `waypoints.py`, or the room targets in `flight.py` before constructing the flight.
+
+### Where the equations came from, and what is approximated
+
+The scripts under `PyDy Scripts` derive the vehicle equations symbolically using SymPy mechanics. For example, the [NED quaternion derivation with wind and drag](PyDy%20Scripts/02%20-%20Added%20Wind%20and%20Aero%20Drag/Quad_3D_frd_NED_Quat.py) defines reference frames, motor locations, inertia, forces and torques, then applies `KanesMethod` to form a mass matrix and forcing vector. It solves `MM * state_derivatives = rhs` and prints the derivative expressions. Those expanded expressions are evaluated numerically in `quad.py`, which also adds the motor response states. The local runner uses NumPy and SciPy; it does not run symbolic derivation during a flight.
+
+The controller reads the simulated state directly, so these examples assume ideal state feedback. The tunnel obstacle cloud is loaded in advance; the current model performs local avoidance along predefined waypoints. Sensor measurements, mapping, battery discharge and physical collision/contact response are outside this implementation. Obstacle repulsion changes the controller's request; it is not a contact force in `state_dot()`.
+
 
 ## Pointcloud Generation
 There are a few available scripts in this branch to generate simple tunnels. They take a while to execute, since a first create a very fine pointcloud, in order to make sure that once voxelized, there are no gaps between points. By voxelized, I mean that I create a corse Cartesian grid (0.25 m between "voxel" centers) and every point of the fine pointcloud is approximated to its closest "voxel".
@@ -57,6 +206,15 @@ The repulsive force is calculated using a widely used algorithm (see **Siegwart'
 3.  Added to the desired thrust/force after its saturation.
 
 Currently, method # 1 is used, and the repulsive gain is set accordingly.
+
+In [potentialField.py](Simulation/potentialField.py), `isWithinRange()` first selects points inside a box extending `2.5 m` along each axis from the quadcopter. `isWithinField()` keeps those within a spherical radius of `2 m`. For each selected obstacle at position `o`, the base contribution is:
+
+```text
+d = distance from the quadcopter to o
+repulsion = 0.4 * (1/d - 1/2) / d² * (quad.pos - o) / d
+```
+
+The last factor is a unit vector pointing away from the obstacle. The contribution grows as the distance decreases and reaches zero at the field boundary. When the target direction is defined, the code also weights each contribution by `cos(angle)²`, where `angle` is between the obstacle direction and the target direction. This gives points along either direction of the target axis more influence than points to the side. The contributions are summed into `F_rep`; with method #1, this value acts as a velocity adjustment in the controller. The position feedback already supplies motion toward the waypoint.
 
 
 ### Useful links
